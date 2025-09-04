@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FloorPlan } from "@/components/dashboard/FloorPlan";
+import FloorPlan from "@/components/dashboard/NewFloorPlan";
 import { BookingModal } from "@/components/dashboard/BookingModal";
 import { DeskCard } from "@/components/dashboard/DeskCard";
 import { DeskFilter } from "@/components/dashboard/DeskFilter";
@@ -30,7 +30,17 @@ import {
   WifiOff,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
+import { getDesks, getProfile, userBookedDesks } from "@/services/apiClient";
 
+interface Desk {
+  id: number;
+  name: string;
+  code: string;
+  status: string;
+  type: string;
+  description: string;
+  max_capacity: number;
+}
 const UserDashboard = () => {
   const [selectedDesk, setSelectedDesk] = useState<string | null>(null);
   const [selectedDeskType, setSelectedDeskType] = useState<"desk" | "office">(
@@ -98,6 +108,59 @@ const UserDashboard = () => {
       type: "office",
     },
   ]);
+
+  const [history, setHistory] = useState([]);
+
+  useEffect(() => {
+    const fetchBookings = async () => {
+      try {
+        setIsLoading(true);
+        const data = await userBookedDesks();
+        setHistory(data);
+      } catch (err) {
+        console.error("Failed to fetch Bookings", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBookings();
+  }, []);
+
+  const [profile, setProfile] = useState([]);
+
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        setIsLoading(true);
+        const data = await getProfile();
+        setProfile(data);
+      } catch (err) {
+        console.error("Failed to fetch Profile", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchProfile();
+  }, []);
+
+  const [desks, setDesks] = useState([]);
+  useEffect(() => {
+    const fetchDesks = async () => {
+      try {
+        setIsLoading(true);
+        const data = await getDesks();
+        setDesks(data);
+        console.log(data);
+      } catch (err) {
+        console.error("Failed to fetch Desks", err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchDesks();
+  }, []);
 
   // Sample desk data for open floor plan - Updated to match OP format
   const openFloorDesks = [
@@ -220,17 +283,39 @@ const UserDashboard = () => {
 
   // Simulate WiFi connection check
   useEffect(() => {
-    // Random simulation of office WiFi connection
-    const checkWifi = () => {
-      const connected = Math.random() > 0.3; // 70% chance of being connected
-      setIsConnectedToWifi(connected);
+    const allowedIPs = ["105.163.156.44", "62.8.71.171"];
+
+    const checkwifi = async () => {
+      try {
+        // Fetch public IP
+        const res = await fetch("https://api.ipify.org?format=json");
+        const data = await res.json();
+
+        // Compare the api
+        const connected = allowedIPs.includes(data.ip);
+        setIsConnectedToWifi(connected);
+      } catch (error) {
+        console.error("Failed to check Wifi/IP:", error);
+        setIsConnectedToWifi(false);
+      }
     };
 
-    checkWifi();
-    const interval = setInterval(checkWifi, 30000); // Check every 30 seconds
-
+    checkwifi();
+    const interval = setInterval(checkwifi, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (isConnectedToWifi) {
+      setUserBookings((prev) =>
+        prev.map((booking) =>
+          booking.status === "reserved"
+            ? { ...booking, status: "checked-in" }
+            : booking,
+        ),
+      );
+    }
+  }, [isConnectedToWifi]);
 
   const [reservedDeskDetails, setReservedDeskDetails] = useState<any>(null);
   const [isReservedDeskModalOpen, setIsReservedDeskModalOpen] = useState(false);
@@ -250,8 +335,14 @@ const UserDashboard = () => {
 
   // Filter desks by selected tab
   const filteredDesksByTab = () => {
-    if (deskStatusTab === "all") return openFloorDesks;
-    return openFloorDesks.filter((desk) => desk.status === deskStatusTab);
+    if (deskStatusTab === "all") return desks;
+    return desks.filter((desk) => desk.status === deskStatusTab);
+  };
+
+  // Filter desks by selected tab
+  const filteredDesksByPlan = () => {
+    if (deskStatusTab === "open floor plan") return desks;
+    return desks.filter((desk) => desk.type === activeTab);
   };
 
   const handleDeskCardClick = (deskId: string, status: string) => {
@@ -277,13 +368,13 @@ const UserDashboard = () => {
 
   // --- Desk state management for available/booked lists ---
   const [availableDesks, setAvailableDesks] = useState<
-    Array<{ id: string; type: 'desk' | 'office'; status: string }>
+    Array<{ id: string; type: "desk" | "office"; status: string }>
   >(openFloorDesks.filter((d) => d.status === "available"));
   const [unavailableDesks, setUnavailableDesks] = useState<
-    Array<{ id: string; type: 'desk' | 'office'; status: string }>
+    Array<{ id: string; type: "desk" | "office"; status: string }>
   >(openFloorDesks.filter((d) => d.status === "unavailable"));
   const [bookedDesks, setBookedDesks] = useState<
-    Array<{ id: string; type: 'desk' | 'office'; status: string }>
+    Array<{ id: string; type: "desk" | "office"; status: string }>
   >(openFloorDesks.filter((d) => d.status === "booked"));
 
   // Update booking logic to move desk between lists
@@ -307,14 +398,14 @@ const UserDashboard = () => {
       [deskId]: { user: userName, status: "booked" },
     }));
     setAvailableDesks((prev) => prev.filter((d) => d.id !== deskId));
-      setBookedDesks((prev) => [
-        ...prev,
-        openFloorDesks.find((d) => d.id === deskId) || {
-          id: deskId,
-          type: type as 'desk' | 'office',
-          status: "booked",
-        },
-      ]);
+    setBookedDesks((prev) => [
+      ...prev,
+      openFloorDesks.find((d) => d.id === deskId) || {
+        id: deskId,
+        type: type as "desk" | "office",
+        status: "booked",
+      },
+    ]);
     setBookingDetails({ deskId, date, time, type });
     setIsBookingModalOpen(false);
     setSelectedDesk(null);
@@ -347,14 +438,14 @@ const UserDashboard = () => {
     // Move desk back to available
     if (booking && bookedDesks.find((d) => d.id === booking.deskId)) {
       setBookedDesks((prev) => prev.filter((d) => d.id !== booking.deskId));
-        setAvailableDesks((prev) => [
-          ...prev,
-          openFloorDesks.find((d) => d.id === booking.deskId) || {
-            id: booking.deskId,
-            type: booking.type as 'desk' | 'office',
-            status: "available",
-          },
-        ]);
+      setAvailableDesks((prev) => [
+        ...prev,
+        openFloorDesks.find((d) => d.id === booking.deskId) || {
+          id: booking.deskId,
+          type: booking.type as "desk" | "office",
+          status: "available",
+        },
+      ]);
     }
     setAllDesks((prev) =>
       prev.map((d) =>
@@ -411,7 +502,7 @@ const UserDashboard = () => {
 
   // Filter functions
   const getCurrentDesks = () => {
-    return activeTab === "open-floor" ? openFloorDesks : executiveOffices;
+    return activeTab === "open floor plan" ? desks : filteredDesksByPlan();
   };
 
   const getFilteredDesks = () => {
@@ -520,7 +611,11 @@ const UserDashboard = () => {
               </div>
 
               <Link to="/calendar">
-                <Button variant="outline" size="sm" className="flex items-center space-x-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex items-center space-x-2"
+                >
                   <Calendar className="h-4 w-4" />
                   <span className="hidden sm:inline">Calendar</span>
                 </Button>
@@ -562,7 +657,7 @@ const UserDashboard = () => {
         {/* Welcome Section */}
         <div className="mb-6 sm:mb-8">
           <h2 className="text-2xl sm:text-3xl font-bold text-primary mb-2">
-            Welcome back, User!
+            Welcome back, {profile?.username}
           </h2>
           <p className="text-sm sm:text-base text-muted-foreground">
             Manage your desk bookings and check your office visit analytics.
@@ -684,23 +779,31 @@ const UserDashboard = () => {
                           </div>
 
                           <div className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2 lg:items-center">
-                            <Badge variant="secondary" className="w-fit">
+                            {/* <Badge variant="secondary" className="w-fit">
                               Reserved{" "}
                               {isConnectedToWifi
                                 ? "• Can Check In"
                                 : "• Need WiFi"}
-                            </Badge>
+                            </Badge> */}
                             <div className="flex space-x-2">
-                              {/* {booking.status === 'reserved' && (
-                               <Button
-                                 size="sm"
-                                 variant="default"
-                                 onClick={() => handleReservedBookingClick(booking)}
-                                 className="text-xs bg-primary text-primary-foreground"
-                               >
-                                 Check In
-                               </Button>
-                             )} */}
+                              {booking.status === "reserved" && (
+                                <Button
+                                  size="sm"
+                                  onClick={() =>
+                                    handleReservedBookingClick(booking)
+                                  }
+                                  disabled={!isConnectedToWifi}
+                                  className={`text-xs ${
+                                    isConnectedToWifi
+                                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                                      : "bg-gray-200 text-gray-400 cursor-not-allowed"
+                                  }`}
+                                >
+                                  {isConnectedToWifi
+                                    ? "Check In"
+                                    : "Connect to WiFi"}
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -727,9 +830,10 @@ const UserDashboard = () => {
                           </div>
                         </div>
                       ))}
+
                     {!isConnectedToWifi && (
                       <div className="mt-4 p-3 bg-warning/10 border border-warning/20 rounded-lg">
-                        <p className="text-sm text-warning-foreground">
+                        <p className="text-sm text-black text-warning-foreground">
                           <strong>Connect to office WiFi</strong> to
                           automatically check in to your reserved desks.
                         </p>
@@ -816,30 +920,25 @@ const UserDashboard = () => {
 
         {/* Floor Plan and Desk Management */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="open-floor">Open Floor Plan</TabsTrigger>
-            <TabsTrigger value="executive-suite">Executive Suite</TabsTrigger>
-            <TabsTrigger value="meeting-rooms">Meeting Rooms</TabsTrigger>
-          </TabsList>
+          <Card className="shadow-custom-md">
+            <CardHeader>
+              <CardTitle className="text-xl font-bold text-primary">
+                Open Floor Plan
+              </CardTitle>
+              <p className="text-muted-foreground">
+                Interactive floor plan and available desks
+              </p>
+            </CardHeader>
+            <CardContent>
+              <FloorPlan
+                selectedDesk={selectedDesk}
+                currentBooking={userBookings}
+                onDeskClick={handleDeskCardClick}
+              />
+            </CardContent>
+          </Card>
 
-          <TabsContent value="open-floor" className="space-y-6">
-            <Card className="shadow-custom-md">
-              <CardHeader>
-                <CardTitle className="text-xl font-bold text-primary">
-                  Open Floor Plan
-                </CardTitle>
-                <p className="text-muted-foreground">
-                  Interactive floor plan and available desks
-                </p>
-              </CardHeader>
-              <CardContent>
-                <FloorPlan
-                  onDeskClick={handleDeskCardClick}
-                  userBookings={userBookings}
-                />
-              </CardContent>
-            </Card>
-
+          <TabsContent value="open floor plan" className="space-y-6">
             {/* Desk Cards for Open Floor */}
             <Card className="shadow-custom-md">
               <CardHeader>
@@ -865,7 +964,7 @@ const UserDashboard = () => {
                   ))}
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                  {filteredDesksByTab().map((desk) => (
+                  {filteredDesksByPlan().map((desk) => (
                     <DeskCard
                       key={desk.id}
                       desk={desk}
@@ -883,7 +982,7 @@ const UserDashboard = () => {
             </Card>
           </TabsContent>
 
-          <TabsContent value="executive-suite" className="space-y-6">
+          <TabsContent value="executive room" className="space-y-6">
             <Card className="shadow-custom-md">
               <CardHeader>
                 <CardTitle className="text-xl font-bold text-primary">
@@ -900,7 +999,7 @@ const UserDashboard = () => {
                   deskCounts={getDeskCounts()}
                 />
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                  {getFilteredDesks().map((office) => (
+                  {filteredDesksByPlan().map((office) => (
                     <DeskCard
                       key={office.id}
                       desk={office}
@@ -917,7 +1016,7 @@ const UserDashboard = () => {
             </Card>
           </TabsContent>
 
-          <TabsContent value="meeting-rooms" className="space-y-6">
+          <TabsContent value="meeting room" className="space-y-6">
             <Card className="shadow-custom-md">
               <CardHeader>
                 <CardTitle className="text-xl font-bold text-primary">
@@ -929,26 +1028,13 @@ const UserDashboard = () => {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
-                  {[...Array(7)].map((_, i) => (
+                  {filteredDesksByPlan().map((office) => (
                     <DeskCard
-                      key={`MR-0${i + 1}`}
-                      desk={{
-                        id: `MR-0${i + 1}`,
-                        type: "office",
-                        status: "available",
-                      }}
-                      onClick={() => handleMeetingRoomClick(`MR-0${i + 1}`)}
+                      key={office.id}
+                      desk={office}
+                      onClick={handleDeskCardClick}
                     />
                   ))}
-                  <DeskCard
-                    key="BoardRoom"
-                    desk={{
-                      id: "Board Room",
-                      type: "office",
-                      status: "available",
-                    }}
-                    onClick={() => handleBoardRoomClick()}
-                  />
                 </div>
               </CardContent>
             </Card>
@@ -995,26 +1081,6 @@ const UserDashboard = () => {
         }}
         booking={selectedBooking}
         onCancel={handleBookingCancel}
-      />
-
-      <CheckInModal
-        isOpen={isCheckInModalOpen}
-        onClose={() => setIsCheckInModalOpen(false)}
-        booking={selectedBooking}
-        onCheckIn={handleCheckIn}
-      />
-
-      {/* Booking Modal for Meeting Rooms */}
-      <BookingModal
-        isOpen={isMeetingRoomModalOpen}
-        onClose={() => {
-          setIsMeetingRoomModalOpen(false);
-          setSelectedMeetingRoom(null);
-        }}
-        deskId={selectedMeetingRoom}
-        deskType="office"
-        onConfirm={handleBookingConfirm}
-        isBoardRoom={selectedMeetingRoom === "Board Room"}
       />
 
       {/* Reserved Desk Details Modal */}
